@@ -1,0 +1,21 @@
+[package]
+name = "nuq"
+version = "0.1.0"
+edition = "2021"
+authors = ["Erik Schubert <nuckal777+nuq@gmail.com>"]
+license = "Unlicense"
+resolver = "2"
+repository = "https://github.com/Nuckal777/nuq"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "3.2", features = ["derive"] }
+erased-serde = "0.3"
+jq-rs = "0.4"
+ron = "0.7"
+serde = "1.0"
+serde_json = "1.0"
+serde-transcode = "1.1"
+serde_yaml = "0.8"
