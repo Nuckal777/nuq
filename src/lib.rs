@@ -1,5 +1,5 @@
 use clap::{clap_derive::ArgEnum, Parser};
-use std::{fs::File, io::Cursor, path::PathBuf, process::ExitCode};
+use std::{fs::File, io::Cursor, path::PathBuf};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ArgEnum)]
 enum FileFormat {
@@ -115,15 +115,14 @@ impl Executor {
     }
 }
 
-#[must_use]
-pub fn run() -> ExitCode {
+/// Runs nuq
+/// # Errors
+/// When arg parsing, io, ... fails
+pub fn run() -> anyhow::Result<()> {
     let args = Args::parse();
     let mut reader = match args.make_reader() {
         Ok(reader) => reader,
-        Err(err) => {
-            eprintln!("failed to open input: {}", err);
-            return ExitCode::FAILURE;
-        }
+        Err(err) => anyhow::bail!("failed to open input: {}", err),
     };
     let executor = Executor {
         input_format: args.input_format,
@@ -131,11 +130,8 @@ pub fn run() -> ExitCode {
         program: args.program,
     };
     match executor.execute(&mut reader, &mut std::io::stdout().lock()) {
-        Ok(_) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("{}", err);
-            ExitCode::FAILURE
-        }
+        Ok(_) => Ok(()),
+        Err(err) => anyhow::bail!("{}", err),
     }
 }
 
