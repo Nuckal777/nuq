@@ -63,6 +63,11 @@ impl FileFormat {
     }
 }
 
+struct Input {
+    reader: Box<dyn std::io::Read>,
+    format: Option<FileFormat>,
+}
+
 /// A multi-format frontend for jq
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -71,11 +76,11 @@ struct Args {
     #[clap(value_parser)]
     program: String,
 
-    /// Input file, stdin if omitted.
+    /// Input files, stdin if omitted.
     #[clap(value_parser)]
-    file: Option<PathBuf>,
+    files: Vec<PathBuf>,
 
-    /// Input format, will be guessed by extension of not provided.
+    /// Input format, will be guessed by extension if omitted.
     #[clap(short, long, value_parser, arg_enum)]
     input_format: Option<FileFormat>,
 
@@ -91,21 +96,27 @@ struct Args {
 }
 
 impl Args {
-    fn make_reader(&self) -> anyhow::Result<Box<dyn std::io::Read>> {
-        match &self.file {
-            Some(path) => Ok(Box::new(File::open(path)?)),
-            None => Ok(Box::new(std::io::stdin().lock())),
+    fn make_inputs(&self) -> anyhow::Result<Vec<Input>> {
+        if self.files.is_empty() {
+            return Ok(vec![Input {
+                format: None,
+                reader: Box::new(std::io::stdin().lock()),
+            }]);
         }
-    }
-
-    fn get_extension(&self) -> Option<&str> {
-        match &self.file {
-            Some(path) => match path.extension() {
-                Some(ext) => ext.to_str(),
-                None => None,
-            },
-            None => None,
+        let mut readers = Vec::<Input>::new();
+        for path in &self.files {
+            readers.push(Input {
+                reader: Box::new(File::open(path)?),
+                format: match path.extension() {
+                    Some(ext) => FileFormat::from_extension(
+                        ext.to_str()
+                            .ok_or_else(|| anyhow::anyhow!("input file name is invalid utf-8"))?,
+                    ),
+                    None => None,
+                },
+            });
         }
+        Ok(readers)
     }
 }
 
@@ -129,25 +140,36 @@ fn pop_quotes(text: &str) -> String {
 }
 
 struct Executor {
-    program: String,
-    input_format: FileFormat,
+    program: jq_rs::JqProgram,
     output_format: Option<FileFormat>,
     raw: bool,
 }
 
 impl Executor {
+    fn new(
+        program: &str,
+        output_format: Option<FileFormat>,
+        raw: bool,
+    ) -> anyhow::Result<Executor> {
+        let program = jq_rs::compile(program).map_err(|err| anyhow::anyhow!("{}", err))?;
+        Ok(Self {
+            program,
+            output_format,
+            raw,
+        })
+    }
+
     fn execute<R: std::io::Read, W: std::io::Write>(
-        &self,
+        &mut self,
         reader: &mut R,
         writer: &mut W,
+        input_format: FileFormat,
     ) -> anyhow::Result<()> {
-        let json = self
-            .input_format
+        let json = input_format
             .read_to_json(reader)
             .map_err(|err| anyhow::anyhow!("failed to convert input to json: {}", err))?;
-        let mut program =
-            jq_rs::compile(&self.program).map_err(|err| anyhow::anyhow!("{}", err))?;
-        let jq_output = program
+        let jq_output = self
+            .program
             .run(&json)
             .map_err(|err| anyhow::anyhow!("failed to execute jq program: {}", err))?;
         let output = if self.raw {
@@ -185,29 +207,22 @@ pub fn run() -> anyhow::Result<()> {
     if args.raw && args.output_format.is_some() {
         anyhow::bail!("cannot use --raw with --output-format");
     }
-    let mut reader = match args.make_reader() {
-        Ok(reader) => reader,
-        Err(err) => anyhow::bail!("failed to open input: {}", err),
-    };
-    let executor = Executor {
-        input_format: args
+    let mut executor = Executor::new(&args.program, args.output_format, args.raw)?;
+    for mut input in args.make_inputs()? {
+        let input_format = args
             .input_format
-            .map_or_else(
-                || match args.get_extension() {
-                    Some(ext) => FileFormat::from_extension(ext),
-                    None => None,
-                },
-                Some,
-            )
-            .ok_or_else(|| anyhow::anyhow!("could not determine input format"))?,
-        output_format: args.output_format,
-        program: args.program,
-        raw: args.raw,
-    };
-    match executor.execute(&mut reader, &mut std::io::stdout().lock()) {
-        Ok(_) => Ok(()),
-        Err(err) => anyhow::bail!("{}", err),
+            .map_or_else(|| input.format, Some)
+            .ok_or_else(|| anyhow::anyhow!("could not determine input format"))?;
+        match executor.execute(
+            &mut input.reader,
+            &mut std::io::stdout().lock(),
+            input_format,
+        ) {
+            Ok(_) => {}
+            Err(err) => anyhow::bail!("{}", err),
+        }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -216,9 +231,17 @@ mod test {
 
     use crate::{Executor, FileFormat};
 
-    fn execute_str(executor: &Executor, value: &str) -> Result<String, Box<dyn Error>> {
+    fn execute_str(
+        executor: &mut Executor,
+        value: &str,
+        input_format: FileFormat,
+    ) -> Result<String, Box<dyn Error>> {
         let mut buf = Vec::<u8>::new();
-        executor.execute(&mut Cursor::new(value), &mut Cursor::new(&mut buf))?;
+        executor.execute(
+            &mut Cursor::new(value),
+            &mut Cursor::new(&mut buf),
+            input_format,
+        )?;
         let result = String::from_utf8(buf)?;
         Ok(result)
     }
@@ -226,13 +249,8 @@ mod test {
     #[test]
     fn identity() -> Result<(), Box<dyn Error>> {
         let json = r#"{"a":"b"}"#;
-        let executor = Executor {
-            input_format: FileFormat::Json,
-            output_format: Some(FileFormat::Json),
-            program: ".".to_owned(),
-            raw: false,
-        };
-        let result = execute_str(&executor, json)?;
+        let mut executor = Executor::new(".", Some(FileFormat::Json), false)?;
+        let result = execute_str(&mut executor, json, FileFormat::Json)?;
         assert_eq!(result, json);
         Ok(())
     }
