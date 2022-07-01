@@ -1,4 +1,4 @@
-use clap::{clap_derive::ArgEnum, Parser};
+use clap::{clap_derive::ArgEnum, ErrorKind, Parser};
 use std::{fs::File, io::Cursor, path::PathBuf};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ArgEnum)]
@@ -67,21 +67,27 @@ impl FileFormat {
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// Jq program to execute
+    /// Jq program to execute.
     #[clap(value_parser)]
     program: String,
 
-    /// Input file
+    /// Input file, stdin if omitted.
     #[clap(value_parser)]
     file: Option<PathBuf>,
 
-    /// Input format, will be guessed by extension of not provided
+    /// Input format, will be guessed by extension of not provided.
     #[clap(short, long, value_parser, arg_enum)]
     input_format: Option<FileFormat>,
 
-    /// Output format, if not provided will return whatever libjq produces
+    /// Output format, if omitted will return whatever libjq produces.
     #[clap(short, long, value_parser, arg_enum)]
     output_format: Option<FileFormat>,
+
+    /// If jq outputs a JSON string only output contained plain text.
+    /// This post-processes the jq output, so it may not behave the same
+    /// as "jq -r".
+    #[clap(short, long, action)]
+    raw: bool,
 }
 
 impl Args {
@@ -103,10 +109,30 @@ impl Args {
     }
 }
 
+fn pop_quotes(text: &str) -> String {
+    // check if the text starts with a quote
+    // if not its likely not a string returned
+    // by jq, so do nothing.
+    if !text.starts_with('"') {
+        return text.to_owned();
+    }
+    let count = text.chars().count();
+    // pop first and last quote
+    let immediate: String = text
+        .char_indices()
+        .filter(|(idx, char)| !(*idx == count - 2 && *char == '"'))
+        .filter(|(idx, char)| !(*idx == 0 && *char == '"'))
+        .map(|(_, char)| char)
+        .collect();
+    // replace json escape sequence \" with "
+    immediate.replace("\\\"", "\"")
+}
+
 struct Executor {
     program: String,
     input_format: FileFormat,
     output_format: Option<FileFormat>,
+    raw: bool,
 }
 
 impl Executor {
@@ -124,11 +150,16 @@ impl Executor {
         let jq_output = program
             .run(&json)
             .map_err(|err| anyhow::anyhow!("failed to execute jq program: {}", err))?;
+        let output = if self.raw {
+            pop_quotes(&jq_output)
+        } else {
+            jq_output
+        };
         match self.output_format {
             Some(format) => format
-                .write_format(jq_output, writer)
+                .write_format(output, writer)
                 .map_err(|err| anyhow::anyhow!("failed to produce output: {}", err))?,
-            None => writer.write_all(jq_output.as_bytes())?,
+            None => writer.write_all(output.as_bytes())?,
         }
         anyhow::Ok(())
     }
@@ -138,7 +169,22 @@ impl Executor {
 /// # Errors
 /// When arg parsing, io, ... fails
 pub fn run() -> anyhow::Result<()> {
-    let args = Args::parse();
+    let parse_result = Args::try_parse();
+    let args = match parse_result {
+        Err(err) => match err.kind() {
+            ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
+                return {
+                    err.print()?;
+                    anyhow::Ok(())
+                }
+            }
+            _ => anyhow::bail!("{}", err),
+        },
+        Ok(args) => args,
+    };
+    if args.raw && args.output_format.is_some() {
+        anyhow::bail!("cannot use --raw with --output-format");
+    }
     let mut reader = match args.make_reader() {
         Ok(reader) => reader,
         Err(err) => anyhow::bail!("failed to open input: {}", err),
@@ -156,6 +202,7 @@ pub fn run() -> anyhow::Result<()> {
             .ok_or_else(|| anyhow::anyhow!("could not determine input format"))?,
         output_format: args.output_format,
         program: args.program,
+        raw: args.raw,
     };
     match executor.execute(&mut reader, &mut std::io::stdout().lock()) {
         Ok(_) => Ok(()),
@@ -183,6 +230,7 @@ mod test {
             input_format: FileFormat::Json,
             output_format: Some(FileFormat::Json),
             program: ".".to_owned(),
+            raw: false,
         };
         let result = execute_str(&executor, json)?;
         assert_eq!(result, json);
