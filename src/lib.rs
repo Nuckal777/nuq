@@ -9,6 +9,15 @@ enum FileFormat {
 }
 
 impl FileFormat {
+    fn from_extension(ext: &str) -> Option<FileFormat> {
+        match ext {
+            "json" => Some(FileFormat::Json),
+            "ron" => Some(FileFormat::Ron),
+            "yaml" | "yml" => Some(FileFormat::Yaml),
+            _ => None,
+        }
+    }
+
     fn read_to_json<R: std::io::Read>(self, mut reader: R) -> anyhow::Result<String> {
         let mut json = Vec::<u8>::new();
         match self {
@@ -66,11 +75,11 @@ struct Args {
     #[clap(value_parser)]
     file: Option<PathBuf>,
 
-    /// Input format
+    /// Input format, will be guessed by extension of not provided
     #[clap(short, long, value_parser, arg_enum)]
-    input_format: FileFormat,
+    input_format: Option<FileFormat>,
 
-    /// Output format
+    /// Output format, if not provided will return whatever libjq produces
     #[clap(short, long, value_parser, arg_enum)]
     output_format: Option<FileFormat>,
 }
@@ -80,6 +89,16 @@ impl Args {
         match &self.file {
             Some(path) => Ok(Box::new(File::open(path)?)),
             None => Ok(Box::new(std::io::stdin().lock())),
+        }
+    }
+
+    fn get_extension(&self) -> Option<&str> {
+        match &self.file {
+            Some(path) => match path.extension() {
+                Some(ext) => ext.to_str(),
+                None => None,
+            },
+            None => None,
         }
     }
 }
@@ -125,7 +144,16 @@ pub fn run() -> anyhow::Result<()> {
         Err(err) => anyhow::bail!("failed to open input: {}", err),
     };
     let executor = Executor {
-        input_format: args.input_format,
+        input_format: args
+            .input_format
+            .map_or_else(
+                || match args.get_extension() {
+                    Some(ext) => FileFormat::from_extension(ext),
+                    None => None,
+                },
+                Some,
+            )
+            .ok_or_else(|| anyhow::anyhow!("could not determine input format"))?,
         output_format: args.output_format,
         program: args.program,
     };
