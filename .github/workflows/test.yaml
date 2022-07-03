@@ -1,14 +1,21 @@
 name: test
 on: [push, pull_request]
+env:
+  JQ_LIB_DIR: /usr/lib/x86_64-linux-gnu
 jobs:
   test:
     name: Test Suite Stable
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+      - name: Install libjq-dev and libonig-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install libjq-dev libonig-dev
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+      - uses: Swatinem/rust-cache@v1
       - run: cargo test --locked --all-features
   lints:
     name: Lints
@@ -19,16 +26,22 @@ jobs:
         with:
           toolchain: stable
           components: clippy
+      - uses: Swatinem/rust-cache@v1
       - run: cargo clippy -- -D warnings -W clippy::all -W clippy::pedantic
   coverage:
     name: Test Coverage Nightly
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+      - name: Install libjq-dev and libonig-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install libjq-dev libonig-dev
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: nightly
           override: true
+      - uses: Swatinem/rust-cache@v1
       - uses: actions-rs/cargo@v1
         with:
           command: test
