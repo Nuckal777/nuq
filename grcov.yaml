@@ -1,0 +1,6 @@
+branch: true
+llvm: true
+ignore-not-existing: true
+ignore:
+  - "/usr/*"
+  - "/home/runner/.cargo/*"
