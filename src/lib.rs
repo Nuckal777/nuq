@@ -1,4 +1,4 @@
-use clap::{clap_derive::ArgEnum, ErrorKind, Parser};
+use clap::{clap_derive::ArgEnum, Parser};
 use std::{fs::File, io::Cursor, path::PathBuf};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ArgEnum)]
@@ -40,13 +40,14 @@ impl FileFormat {
         anyhow::Ok(String::from_utf8(json)?)
     }
 
-    fn write_format<W: std::io::Write>(self, value: String, writer: W) -> anyhow::Result<()> {
+    fn write_format<W: std::io::Write>(self, value: String, mut writer: W) -> anyhow::Result<()> {
         match self {
             // need to validate that the output is actually json
             FileFormat::Json => {
                 let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
-                let mut se = serde_json::Serializer::new(writer);
+                let mut se = serde_json::Serializer::new(&mut writer);
                 serde_transcode::transcode(&mut de, &mut se)?;
+                writer.write_all(&[b'\n'])?;
             }
             FileFormat::Yaml => {
                 let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
@@ -55,8 +56,9 @@ impl FileFormat {
             }
             FileFormat::Ron => {
                 let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
-                let mut se = ron::Serializer::with_options(writer, None, ron::Options::default())?;
+                let mut se = ron::Serializer::with_options(&mut writer, None, ron::Options::default())?;
                 serde_transcode::transcode(&mut de, &mut se)?;
+                writer.write_all(&[b'\n'])?;
             }
         }
         anyhow::Ok(())
@@ -71,7 +73,7 @@ struct Input {
 /// A multi-format frontend for jq
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
-struct Args {
+pub struct Args {
     /// Jq program to execute.
     #[clap(value_parser)]
     program: String,
@@ -120,6 +122,8 @@ impl Args {
     }
 }
 
+/// Turns a jq string output into a raw string
+/// reverting quoting and escaping.
 fn pop_quotes(text: &str) -> String {
     // check if the text starts with a quote
     // if not its likely not a string returned
@@ -190,20 +194,7 @@ impl Executor {
 /// Runs nuq
 /// # Errors
 /// When arg parsing, io, ... fails
-pub fn run() -> anyhow::Result<()> {
-    let parse_result = Args::try_parse();
-    let args = match parse_result {
-        Err(err) => match err.kind() {
-            ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
-                return {
-                    err.print()?;
-                    anyhow::Ok(())
-                }
-            }
-            _ => anyhow::bail!("{}", err),
-        },
-        Ok(args) => args,
-    };
+pub fn run(args: &Args) -> anyhow::Result<()> {
     if args.raw && args.output_format.is_some() {
         anyhow::bail!("cannot use --raw with --output-format");
     }
@@ -247,11 +238,55 @@ mod test {
     }
 
     #[test]
-    fn identity() -> Result<(), Box<dyn Error>> {
+    fn file_format_from_extension() {
+        assert_eq!(FileFormat::from_extension("json"), Some(FileFormat::Json));
+        assert_eq!(FileFormat::from_extension("ron"), Some(FileFormat::Ron));
+        assert_eq!(FileFormat::from_extension("yaml"), Some(FileFormat::Yaml));
+        assert_eq!(FileFormat::from_extension("yml"), Some(FileFormat::Yaml));
+    }
+
+    #[test]
+    fn identity_json() -> Result<(), Box<dyn Error>> {
         let json = r#"{"a":"b"}"#;
         let mut executor = Executor::new(".", Some(FileFormat::Json), false)?;
         let result = execute_str(&mut executor, json, FileFormat::Json)?;
-        assert_eq!(result, json);
+        assert_eq!(result, format!("{}\n", json));
+        Ok(())
+    }
+
+    #[test]
+    fn identity_yaml() -> Result<(), Box<dyn Error>> {
+        let yaml = "a: b";
+        let mut executor = Executor::new(".", Some(FileFormat::Yaml), false)?;
+        let result = execute_str(&mut executor, yaml, FileFormat::Yaml)?;
+        assert_eq!(result, format!("---\n{}\n", yaml));
+        Ok(())
+    }
+
+    #[test]
+    fn identity_ron() -> Result<(), Box<dyn Error>> {
+        let ron = r#"(a: "b")"#;
+        let mut executor = Executor::new(".", Some(FileFormat::Ron), false)?;
+        let result = execute_str(&mut executor, ron, FileFormat::Ron)?;
+        assert_eq!(result, "{\"a\":\"b\"}\n");
+        Ok(())
+    }
+
+    #[test]
+    fn string_json() -> Result<(), Box<dyn Error>> {
+        let json = r#"{"a":"b"}"#;
+        let mut executor = Executor::new(".a", Some(FileFormat::Json), false)?;
+        let result = execute_str(&mut executor, json, FileFormat::Json)?;
+        assert_eq!(result, "\"b\"\n");
+        Ok(())
+    }
+
+    #[test]
+    fn string_raw() -> Result<(), Box<dyn Error>> {
+        let json = r#"{"a":"b"}"#;
+        let mut executor = Executor::new(".a", None, true)?;
+        let result = execute_str(&mut executor, json, FileFormat::Json)?;
+        assert_eq!(result, "b\n");
         Ok(())
     }
 }
