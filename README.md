@@ -32,6 +32,9 @@ OPTIONS:
     -r, --raw
             If jq outputs a JSON string only output contained plain text. This post-processes the jq
             output, so it may not behave the same as "jq -r"
+
+    --slurp
+            Concatenate all input files into a JSON array before processing it with jq
 ```
 
 ## How it works

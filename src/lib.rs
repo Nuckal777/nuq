@@ -9,12 +9,12 @@ enum FileFormat {
 }
 
 impl FileFormat {
-    fn from_extension(ext: &str) -> Option<FileFormat> {
+    fn from_extension(ext: &str) -> anyhow::Result<FileFormat> {
         match ext {
-            "json" => Some(FileFormat::Json),
-            "ron" => Some(FileFormat::Ron),
-            "yaml" | "yml" => Some(FileFormat::Yaml),
-            _ => None,
+            "json" => Ok(FileFormat::Json),
+            "ron" => Ok(FileFormat::Ron),
+            "yaml" | "yml" => Ok(FileFormat::Yaml),
+            _ => Err(anyhow::anyhow!("unknown extension: {}", ext)),
         }
     }
 
@@ -56,7 +56,8 @@ impl FileFormat {
             }
             FileFormat::Ron => {
                 let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
-                let mut se = ron::Serializer::with_options(&mut writer, None, ron::Options::default())?;
+                let mut se =
+                    ron::Serializer::with_options(&mut writer, None, ron::Options::default())?;
                 serde_transcode::transcode(&mut de, &mut se)?;
                 writer.write_all(&[b'\n'])?;
             }
@@ -67,7 +68,7 @@ impl FileFormat {
 
 struct Input {
     reader: Box<dyn std::io::Read>,
-    format: Option<FileFormat>,
+    format: FileFormat,
 }
 
 /// A multi-format frontend for jq
@@ -95,13 +96,20 @@ pub struct Args {
     /// as "jq -r".
     #[clap(short, long, action)]
     raw: bool,
+
+    /// Concatenate all input files into a JSON array before processing it
+    /// with jq.
+    #[clap(long, action)]
+    slurp: bool,
 }
 
 impl Args {
     fn make_inputs(&self) -> anyhow::Result<Vec<Input>> {
         if self.files.is_empty() {
             return Ok(vec![Input {
-                format: None,
+                format: self
+                    .input_format
+                    .ok_or_else(|| anyhow::anyhow!("need to specify input format for stdin"))?,
                 reader: Box::new(std::io::stdin().lock()),
             }]);
         }
@@ -109,12 +117,16 @@ impl Args {
         for path in &self.files {
             readers.push(Input {
                 reader: Box::new(File::open(path)?),
-                format: match path.extension() {
-                    Some(ext) => FileFormat::from_extension(
-                        ext.to_str()
-                            .ok_or_else(|| anyhow::anyhow!("input file name is invalid utf-8"))?,
-                    ),
-                    None => None,
+                format: match self.input_format {
+                    Some(format) => format,
+                    None => match path.extension() {
+                        Some(ext) => {
+                            FileFormat::from_extension(ext.to_str().ok_or_else(|| {
+                                anyhow::anyhow!("input file name is invalid utf-8")
+                            })?)?
+                        }
+                        None => anyhow::bail!("input path {} has no extension", path.display()),
+                    },
                 },
             });
         }
@@ -199,15 +211,20 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
         anyhow::bail!("cannot use --raw with --output-format");
     }
     let mut executor = Executor::new(&args.program, args.output_format, args.raw)?;
-    for mut input in args.make_inputs()? {
-        let input_format = args
-            .input_format
-            .map_or_else(|| input.format, Some)
-            .ok_or_else(|| anyhow::anyhow!("could not determine input format"))?;
+    let inputs = if args.slurp {
+        let array = slurp(&mut args.make_inputs()?)?;
+        vec![Input {
+            format: FileFormat::Json,
+            reader: Box::new(Cursor::new(array)),
+        }]
+    } else {
+        args.make_inputs()?
+    };
+    for mut input in inputs {
         match executor.execute(
             &mut input.reader,
             &mut std::io::stdout().lock(),
-            input_format,
+            input.format,
         ) {
             Ok(_) => {}
             Err(err) => anyhow::bail!("{}", err),
@@ -216,11 +233,20 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn slurp(inputs: &mut [Input]) -> anyhow::Result<String> {
+    let mut jsons = Vec::<String>::new();
+    for input in inputs {
+        jsons.push(input.format.read_to_json(&mut input.reader)?);
+    }
+    let result = format!("[{}]", jsons.join(","));
+    anyhow::Ok(result)
+}
+
 #[cfg(test)]
 mod test {
     use std::{error::Error, io::Cursor};
 
-    use crate::{Executor, FileFormat};
+    use crate::{Executor, FileFormat, Input};
 
     fn execute_str(
         executor: &mut Executor,
@@ -239,10 +265,16 @@ mod test {
 
     #[test]
     fn file_format_from_extension() {
-        assert_eq!(FileFormat::from_extension("json"), Some(FileFormat::Json));
-        assert_eq!(FileFormat::from_extension("ron"), Some(FileFormat::Ron));
-        assert_eq!(FileFormat::from_extension("yaml"), Some(FileFormat::Yaml));
-        assert_eq!(FileFormat::from_extension("yml"), Some(FileFormat::Yaml));
+        assert_eq!(
+            FileFormat::from_extension("json").unwrap(),
+            FileFormat::Json
+        );
+        assert_eq!(FileFormat::from_extension("ron").unwrap(), FileFormat::Ron);
+        assert_eq!(
+            FileFormat::from_extension("yaml").unwrap(),
+            FileFormat::Yaml
+        );
+        assert_eq!(FileFormat::from_extension("yml").unwrap(), FileFormat::Yaml);
     }
 
     #[test]
@@ -287,6 +319,21 @@ mod test {
         let mut executor = Executor::new(".a", None, true)?;
         let result = execute_str(&mut executor, json, FileFormat::Json)?;
         assert_eq!(result, "b\n");
+        Ok(())
+    }
+
+    #[test]
+    fn slurp() -> Result<(), Box<dyn Error>> {
+        let json = Input {
+            format: FileFormat::Json,
+            reader: Box::new(Cursor::new(r#"{"a":"b"}"#)),
+        };
+        let yaml = Input {
+            format: FileFormat::Yaml,
+            reader: Box::new(Cursor::new("c: d")),
+        };
+        let array = super::slurp(&mut [json, yaml])?;
+        assert_eq!(array, r#"[{"a":"b"},{"c":"d"}]"#);
         Ok(())
     }
 }

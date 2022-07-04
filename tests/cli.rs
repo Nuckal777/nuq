@@ -16,9 +16,23 @@ fn yaml_stdio_to_raw_string() {
 fn yaml_file_to_raw_string() {
     std::fs::write("./mock.yaml", "key: test").expect("failed to create mock.yaml");
     let (exit, output) = spawn_nuq(&["-r", ".key", "mock.yaml"], b"key: test");
-    std::fs::remove_file("./mock.yaml").expect("failed to remove .yaml");
+    std::fs::remove_file("./mock.yaml").expect("failed to remove mock.yaml");
     assert!(exit.success());
     assert_eq!(output, "test\n");
+}
+
+#[test]
+fn slurp() {
+    std::fs::write("./mock1.yaml", "key1: test1").expect("failed to create mock.yaml");
+    std::fs::write("./mock2.yaml", "key2: test2").expect("failed to create mock.yaml");
+    let (exit, output) = spawn_nuq(&["--slurp", ".", "mock1.yaml", "mock2.yaml"], b"");
+    std::fs::remove_file("./mock1.yaml").expect("failed to remove mock1.yaml");
+    std::fs::remove_file("./mock2.yaml").expect("failed to remove mock2.yaml");
+    assert!(exit.success());
+    assert_eq!(
+        output,
+        r#"[{"key1":"test1"},{"key2":"test2"}]"#.to_owned() + "\n"
+    );
 }
 
 fn spawn_nuq(args: &[&str], input: &[u8]) -> (ExitStatus, String) {
