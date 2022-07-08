@@ -110,7 +110,7 @@ impl Args {
                 format: self
                     .input_format
                     .ok_or_else(|| anyhow::anyhow!("need to specify input format for stdin"))?,
-                reader: Box::new(std::io::stdin().lock()),
+                reader: Box::new(std::io::stdin()),
             }]);
         }
         let mut readers = Vec::<Input>::new();
