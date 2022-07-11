@@ -6,6 +6,7 @@ enum FileFormat {
     Json,
     Yaml,
     Ron,
+    Toml,
 }
 
 impl FileFormat {
@@ -14,6 +15,7 @@ impl FileFormat {
             "json" => Ok(FileFormat::Json),
             "ron" => Ok(FileFormat::Ron),
             "yaml" | "yml" => Ok(FileFormat::Yaml),
+            "toml" => Ok(FileFormat::Toml),
             _ => Err(anyhow::anyhow!("unknown extension: {}", ext)),
         }
     }
@@ -33,6 +35,14 @@ impl FileFormat {
                 let mut input = Vec::<u8>::new();
                 reader.read_to_end(&mut input)?;
                 let mut de = ron::Deserializer::from_bytes(&input)?;
+                let mut se = serde_json::Serializer::new(Cursor::new(&mut json));
+                serde_transcode::transcode(&mut de, &mut se)?;
+            }
+            FileFormat::Toml => {
+                let mut input = Vec::<u8>::new();
+                reader.read_to_end(&mut input)?;
+                let toml = String::from_utf8(input)?;
+                let mut de = toml::Deserializer::new(&toml);
                 let mut se = serde_json::Serializer::new(Cursor::new(&mut json));
                 serde_transcode::transcode(&mut de, &mut se)?;
             }
@@ -61,6 +71,13 @@ impl FileFormat {
                 serde_transcode::transcode(&mut de, &mut se)?;
                 writer.write_all(&[b'\n'])?;
             }
+            FileFormat::Toml => {
+                let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
+                let mut toml = String::new();
+                let mut se = toml::Serializer::new(&mut toml);
+                serde_transcode::transcode(&mut de, &mut se)?;
+                writer.write_all(toml.as_bytes())?;
+            }
         }
         anyhow::Ok(())
     }
@@ -88,6 +105,7 @@ pub struct Args {
     input_format: Option<FileFormat>,
 
     /// Output format, if omitted will return whatever libjq produces.
+    /// Toml output may require reordering the input.
     #[clap(short, long, value_parser, arg_enum)]
     output_format: Option<FileFormat>,
 
@@ -275,6 +293,7 @@ mod test {
             FileFormat::Yaml
         );
         assert_eq!(FileFormat::from_extension("yml").unwrap(), FileFormat::Yaml);
+        assert_eq!(FileFormat::from_extension("toml").unwrap(), FileFormat::Toml);
     }
 
     #[test]
@@ -301,6 +320,15 @@ mod test {
         let mut executor = Executor::new(".", Some(FileFormat::Ron), false)?;
         let result = execute_str(&mut executor, ron, FileFormat::Ron)?;
         assert_eq!(result, "{\"a\":\"b\"}\n");
+        Ok(())
+    }
+
+    #[test]
+    fn identity_toml() -> Result<(), Box<dyn Error>> {
+        let ron = r#"a = "b""#;
+        let mut executor = Executor::new(".", Some(FileFormat::Toml), false)?;
+        let result = execute_str(&mut executor, ron, FileFormat::Toml)?;
+        assert_eq!(result, "a = \"b\"\n");
         Ok(())
     }
 

@@ -6,7 +6,7 @@ use std::{
 const BINARY_PATH: &str = env!("CARGO_BIN_EXE_nuq");
 
 #[test]
-fn yaml_stdio_to_raw_string() {
+fn yaml_stdin_to_raw_string() {
     let (exit, output) = spawn_nuq(&["-r", "-i", "yaml", ".key"], b"key: test");
     assert!(exit.success());
     assert_eq!(output, "test\n");
