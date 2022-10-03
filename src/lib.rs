@@ -4,6 +4,7 @@ use std::{fs::File, io::Cursor, path::PathBuf};
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ArgEnum)]
 enum FileFormat {
     Json,
+    JsonLines,
     Yaml,
     Ron,
     Toml,
@@ -13,6 +14,7 @@ impl FileFormat {
     fn from_extension(ext: &str) -> anyhow::Result<FileFormat> {
         match ext {
             "json" => Ok(FileFormat::Json),
+            "jsonl" => Ok(FileFormat::JsonLines),
             "ron" => Ok(FileFormat::Ron),
             "yaml" | "yml" => Ok(FileFormat::Yaml),
             "toml" => Ok(FileFormat::Toml),
@@ -20,16 +22,29 @@ impl FileFormat {
         }
     }
 
-    fn read_to_json<R: std::io::Read>(self, mut reader: R) -> anyhow::Result<String> {
+    fn read_to_json<R: std::io::Read>(self, mut reader: R) -> anyhow::Result<Vec<String>> {
         let mut json = Vec::<u8>::new();
         match self {
             FileFormat::Json => {
                 reader.read_to_end(&mut json)?;
             }
+            FileFormat::JsonLines => {
+                reader.read_to_end(&mut json)?;
+                let jsons = String::from_utf8(json)?;
+                let documents: Vec<String> = jsons.split('\n').filter(|s| !s.is_empty()).map(ToOwned::to_owned).collect();
+                return anyhow::Ok(documents);
+            }
             FileFormat::Yaml => {
                 let de = serde_yaml::Deserializer::from_reader(reader);
-                let mut se = serde_json::Serializer::new(Cursor::new(&mut json));
-                serde_transcode::transcode(de, &mut se)?;
+                let mut docs = Vec::<String>::new();
+                // deserializer implements iterator for multi document yamls
+                for doc in de {
+                    let mut buf = Vec::<u8>::new();
+                    let mut se = serde_json::Serializer::new(Cursor::new(&mut buf));
+                    serde_transcode::transcode(doc, &mut se)?;
+                    docs.push(String::from_utf8(buf)?);
+                }
+                return anyhow::Ok(docs);
             }
             FileFormat::Ron => {
                 let mut input = Vec::<u8>::new();
@@ -47,36 +62,74 @@ impl FileFormat {
                 serde_transcode::transcode(&mut de, &mut se)?;
             }
         }
-        anyhow::Ok(String::from_utf8(json)?)
+        anyhow::Ok(vec![String::from_utf8(json)?])
     }
 
-    fn write_format<W: std::io::Write>(self, value: String, mut writer: W) -> anyhow::Result<()> {
+    fn write_format<W: std::io::Write>(
+        self,
+        values: &[String],
+        mut writer: &mut W,
+    ) -> anyhow::Result<()> {
         match self {
             // need to validate that the output is actually json
             FileFormat::Json => {
-                let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
-                let mut se = serde_json::Serializer::new(&mut writer);
-                serde_transcode::transcode(&mut de, &mut se)?;
-                writer.write_all(&[b'\n'])?;
+                // json itself cannot deal with multiple documents, there is jsonlines for that
+                if values.len() > 1 {
+                    anyhow::bail!("received more than one output document, but json does not support that. Try json-lines instead.");
+                }
+                for value in values {
+                    let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
+                    let mut se = serde_json::Serializer::new(&mut writer);
+                    serde_transcode::transcode(&mut de, &mut se)?;
+                    writer.write_all(&[b'\n'])?;
+                }
+            }
+            FileFormat::JsonLines => {
+                for value in values {
+                    let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
+                    let mut se = serde_json::Serializer::new(&mut writer);
+                    serde_transcode::transcode(&mut de, &mut se)?;
+                    writer.write_all(&[b'\n'])?;
+                }
             }
             FileFormat::Yaml => {
-                let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
-                let mut se = serde_yaml::Serializer::new(writer);
-                serde_transcode::transcode(&mut de, &mut se)?;
+                // document seperator in output build in
+                for value in values {
+                    let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
+                    let mut se = serde_yaml::Serializer::new(&mut writer);
+                    serde_transcode::transcode(&mut de, &mut se)?;
+                }
             }
             FileFormat::Ron => {
-                let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
-                let mut se =
-                    ron::Serializer::with_options(&mut writer, None, ron::Options::default())?;
-                serde_transcode::transcode(&mut de, &mut se)?;
-                writer.write_all(&[b'\n'])?;
+                // no multi document support
+                if values.len() > 1 {
+                    anyhow::bail!(
+                        "received more than one output document, but ron does not support that."
+                    );
+                }
+                for value in values {
+                    let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
+                    let mut se =
+                        ron::Serializer::with_options(&mut writer, None, ron::Options::default())?;
+                    serde_transcode::transcode(&mut de, &mut se)?;
+                    writer.write_all(&[b'\n'])?;
+                }
             }
             FileFormat::Toml => {
-                let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
-                let mut toml = String::new();
-                let mut se = toml::Serializer::new(&mut toml);
-                serde_transcode::transcode(&mut de, &mut se)?;
-                writer.write_all(toml.as_bytes())?;
+                // no multi document support
+                if values.len() > 1 {
+                    anyhow::bail!(
+                        "received more than one output document, but toml does not support that."
+                    );
+                }
+                for value in values {
+                    let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
+                    let mut toml = String::new();
+                    let mut se = toml::Serializer::new(&mut toml);
+                    serde_transcode::transcode(&mut de, &mut se)?;
+                    drop(se);
+                    writer.write_all(toml.as_bytes())?;
+                }
             }
         }
         anyhow::Ok(())
@@ -163,12 +216,13 @@ fn pop_quotes(text: &str) -> String {
     }
     let count = text.chars().count();
     // pop first and last quote
-    let immediate: String = text
+    let mut immediate: String = text
         .char_indices()
         .filter(|(idx, char)| !(*idx == count - 2 && *char == '"'))
         .filter(|(idx, char)| !(*idx == 0 && *char == '"'))
         .map(|(_, char)| char)
         .collect();
+    immediate = immediate.trim().to_owned();
     // replace json escape sequence \" with "
     immediate.replace("\\\"", "\"")
 }
@@ -199,23 +253,34 @@ impl Executor {
         writer: &mut W,
         input_format: FileFormat,
     ) -> anyhow::Result<()> {
-        let json = input_format
+        let jsons = input_format
             .read_to_json(reader)
             .map_err(|err| anyhow::anyhow!("failed to convert input to json: {}", err))?;
-        let jq_output = self
-            .program
-            .run(&json)
-            .map_err(|err| anyhow::anyhow!("failed to execute jq program: {}", err))?;
-        let output = if self.raw {
-            pop_quotes(&jq_output)
-        } else {
-            jq_output
-        };
+        let outputs: anyhow::Result<Vec<String>> = jsons
+            .iter()
+            .map(|j| {
+                let output = self
+                    .program
+                    .run(j)
+                    .map_err(|err| anyhow::anyhow!("failed to execute jq program: {}", err))?;
+                if self.raw {
+                    Ok(pop_quotes(&output))
+                } else {
+                    Ok(output)
+                }
+            })
+            .collect();
+        let outputs = outputs?;
         match self.output_format {
             Some(format) => format
-                .write_format(output, writer)
+                .write_format(&outputs, writer)
                 .map_err(|err| anyhow::anyhow!("failed to produce output: {}", err))?,
-            None => writer.write_all(output.as_bytes())?,
+            None => {
+                for output in outputs {
+                    writer.write_all(output.as_bytes())?;
+                    writer.write_all(b"\n")?;
+                }
+            },
         }
         anyhow::Ok(())
     }
@@ -254,7 +319,7 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
 fn slurp(inputs: &mut [Input]) -> anyhow::Result<String> {
     let mut jsons = Vec::<String>::new();
     for input in inputs {
-        jsons.push(input.format.read_to_json(&mut input.reader)?);
+        jsons.extend(input.format.read_to_json(&mut input.reader)?.into_iter());
     }
     let result = format!("[{}]", jsons.join(","));
     anyhow::Ok(result)
@@ -293,7 +358,10 @@ mod test {
             FileFormat::Yaml
         );
         assert_eq!(FileFormat::from_extension("yml").unwrap(), FileFormat::Yaml);
-        assert_eq!(FileFormat::from_extension("toml").unwrap(), FileFormat::Toml);
+        assert_eq!(
+            FileFormat::from_extension("toml").unwrap(),
+            FileFormat::Toml
+        );
     }
 
     #[test]
