@@ -31,7 +31,11 @@ impl FileFormat {
             FileFormat::JsonLines => {
                 reader.read_to_end(&mut json)?;
                 let jsons = String::from_utf8(json)?;
-                let documents: Vec<String> = jsons.split('\n').filter(|s| !s.is_empty()).map(ToOwned::to_owned).collect();
+                let documents: Vec<String> = jsons
+                    .split('\n')
+                    .filter(|s| !s.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect();
                 return anyhow::Ok(documents);
             }
             FileFormat::Yaml => {
@@ -223,6 +227,7 @@ fn pop_quotes(text: &str) -> String {
         .map(|(_, char)| char)
         .collect();
     immediate = immediate.trim().to_owned();
+    immediate.push('\n');
     // replace json escape sequence \" with "
     immediate.replace("\\\"", "\"")
 }
@@ -278,9 +283,8 @@ impl Executor {
             None => {
                 for output in outputs {
                     writer.write_all(output.as_bytes())?;
-                    writer.write_all(b"\n")?;
                 }
-            },
+            }
         }
         anyhow::Ok(())
     }
@@ -361,6 +365,10 @@ mod test {
         assert_eq!(
             FileFormat::from_extension("toml").unwrap(),
             FileFormat::Toml
+        );
+        assert_eq!(
+            FileFormat::from_extension("jsonl").unwrap(),
+            FileFormat::JsonLines
         );
     }
 
