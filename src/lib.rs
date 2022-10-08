@@ -1,7 +1,7 @@
-use clap::{clap_derive::ArgEnum, Parser};
+use clap::{Parser, ValueEnum};
 use std::{fs::File, io::Cursor, path::PathBuf};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ArgEnum)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 enum FileFormat {
     Json,
     Yaml,
@@ -139,12 +139,12 @@ pub struct Args {
     files: Vec<PathBuf>,
 
     /// Input format, will be guessed by extension if omitted.
-    #[clap(short, long, value_parser, arg_enum)]
+    #[clap(short, long, value_parser, value_enum)]
     input_format: Option<FileFormat>,
 
     /// Output format, if omitted will return whatever libjq produces.
     /// Toml output may require reordering the input.
-    #[clap(short, long, value_parser, arg_enum)]
+    #[clap(short, long, value_parser, value_enum)]
     output_format: Option<FileFormat>,
 
     /// If jq outputs a JSON string only output contained plain text.

@@ -16,25 +16,23 @@ To my knowledge there are two common options for that:
 
 ## Usage
 ```
-nuq [OPTIONS] <PROGRAM> [FILES]...
+A multi-format frontend for jq
 
-ARGS:
-    <PROGRAM>     Jq program to execute
-    <FILES>...    Input files, stdin if omitted
+Usage: nuq [OPTIONS] <PROGRAM> [FILES]...
 
-OPTIONS:
-    -i, --input-format <INPUT_FORMAT>
-            Input format, will be guessed by extension if omitted
+Arguments:
+  <PROGRAM>   Jq program to execute
+  [FILES]...  Input files, stdin if omitted
 
-    -o, --output-format <OUTPUT_FORMAT>
-            Output format, if omitted will return whatever libjq produces
-
-    -r, --raw
-            If jq outputs a JSON string only output contained plain text. This post-processes the jq
-            output, so it may not behave the same as "jq -r"
-
-    --slurp
-            Concatenate all input files into a JSON array before processing it with jq
+Options:
+  -i, --input-format <INPUT_FORMAT>
+          Input format, will be guessed by extension if omitted [possible values: json, yaml, ron, toml]
+  -o, --output-format <OUTPUT_FORMAT>
+          Output format, if omitted will return whatever libjq produces. Toml output may require reordering the input [possible values: json, yaml, ron, toml]
+  -r, --raw
+          If jq outputs a JSON string only output contained plain text. This post-processes the jq output, so it may not behave the same as "jq -r"
+      --slurp
+          Concatenate all input files into a JSON array before processing it with jq
 ```
 
 ## How it works

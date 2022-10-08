@@ -11,7 +11,7 @@ repository = "https://github.com/Nuckal777/nuq"
 
 [dependencies]
 anyhow = "1.0"
-clap = { version = "3.2", features = ["derive"] }
+clap = { version = "4.0", features = ["derive"] }
 erased-serde = "0.3"
 jq-rs = "0.4"
 ron = "0.7"
