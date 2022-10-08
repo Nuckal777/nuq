@@ -4,7 +4,6 @@ use std::{fs::File, io::Cursor, path::PathBuf};
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ArgEnum)]
 enum FileFormat {
     Json,
-    JsonLines,
     Yaml,
     Ron,
     Toml,
@@ -13,8 +12,7 @@ enum FileFormat {
 impl FileFormat {
     fn from_extension(ext: &str) -> anyhow::Result<FileFormat> {
         match ext {
-            "json" => Ok(FileFormat::Json),
-            "jsonl" => Ok(FileFormat::JsonLines),
+            "json" | "jsonl" => Ok(FileFormat::Json),
             "ron" => Ok(FileFormat::Ron),
             "yaml" | "yml" => Ok(FileFormat::Yaml),
             "toml" => Ok(FileFormat::Toml),
@@ -26,17 +24,12 @@ impl FileFormat {
         let mut json = Vec::<u8>::new();
         match self {
             FileFormat::Json => {
-                reader.read_to_end(&mut json)?;
-            }
-            FileFormat::JsonLines => {
-                reader.read_to_end(&mut json)?;
-                let jsons = String::from_utf8(json)?;
-                let documents: Vec<String> = jsons
-                    .split('\n')
-                    .filter(|s| !s.is_empty())
-                    .map(ToOwned::to_owned)
-                    .collect();
-                return anyhow::Ok(documents);
+                let de = serde_json::Deserializer::from_reader(reader);
+                let mut docs = Vec::<String>::new();
+                for doc in de.into_iter::<serde_json::Value>() {
+                    docs.push(doc?.to_string());
+                }
+                return anyhow::Ok(docs);
             }
             FileFormat::Yaml => {
                 let de = serde_yaml::Deserializer::from_reader(reader);
@@ -77,18 +70,6 @@ impl FileFormat {
         match self {
             // need to validate that the output is actually json
             FileFormat::Json => {
-                // json itself cannot deal with multiple documents, there is jsonlines for that
-                if values.len() > 1 {
-                    anyhow::bail!("received more than one output document, but json does not support that. Try json-lines instead.");
-                }
-                for value in values {
-                    let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
-                    let mut se = serde_json::Serializer::new(&mut writer);
-                    serde_transcode::transcode(&mut de, &mut se)?;
-                    writer.write_all(&[b'\n'])?;
-                }
-            }
-            FileFormat::JsonLines => {
                 for value in values {
                     let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
                     let mut se = serde_json::Serializer::new(&mut writer);
@@ -368,8 +349,9 @@ mod test {
         );
         assert_eq!(
             FileFormat::from_extension("jsonl").unwrap(),
-            FileFormat::JsonLines
+            FileFormat::Json
         );
+        assert!(FileFormat::from_extension("garbage").is_err());
     }
 
     #[test]

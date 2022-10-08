@@ -12,7 +12,7 @@ To my knowledge there are two common options for that:
 - [yq](https://github.com/mikefarah/yq), which uses Golang and has its interpreter with differs from jq's interpreter.
 - [yq](https://github.com/kislyuk/yq), which uses python to convert YAML to JSON and shells out to jq after. Therefore it is slower than native implementations.
 
-`nuq` should have decent speed and can execute all programs accepted by jq due to calling libjq directly.
+`nuq` should have decent speed and can execute all programs accepted by jq due to calling libjq directly. To be fair `nuq` has to parse JSON input streams containing multiple documents to split them before they can be handed off to libjq, so a straight `jq` should be faster. :poop:
 
 ## Usage
 ```
