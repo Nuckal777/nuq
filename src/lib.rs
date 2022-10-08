@@ -78,8 +78,9 @@ impl FileFormat {
                 }
             }
             FileFormat::Yaml => {
-                // document seperator in output build in
+                let prefix = if values.len() > 1 { "---\n" } else { "" };
                 for value in values {
+                    writer.write_all(prefix.as_bytes())?;
                     let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
                     let mut se = serde_yaml::Serializer::new(&mut writer);
                     serde_transcode::transcode(&mut de, &mut se)?;
@@ -368,7 +369,16 @@ mod test {
         let yaml = "a: b";
         let mut executor = Executor::new(".", Some(FileFormat::Yaml), false)?;
         let result = execute_str(&mut executor, yaml, FileFormat::Yaml)?;
-        assert_eq!(result, format!("---\n{}\n", yaml));
+        assert_eq!(result, format!("{}\n", yaml));
+        Ok(())
+    }
+
+    #[test]
+    fn identity_multi_yaml() -> Result<(), Box<dyn Error>> {
+        let yaml = "a: b\n---\na: c";
+        let mut executor = Executor::new(".", Some(FileFormat::Yaml), false)?;
+        let result = execute_str(&mut executor, yaml, FileFormat::Yaml)?;
+        assert_eq!(&result, "---\na: b\n---\na: c\n");
         Ok(())
     }
 

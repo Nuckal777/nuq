@@ -12,11 +12,10 @@ repository = "https://github.com/Nuckal777/nuq"
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"] }
-erased-serde = "0.3"
 jq-rs = "0.4"
 ron = "0.7"
 serde = "1.0"
 serde_json = "1.0"
 serde-transcode = "1.1"
-serde_yaml = "0.8"
+serde_yaml = "0.9"
 toml = "0.5"
