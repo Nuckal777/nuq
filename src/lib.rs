@@ -1,5 +1,20 @@
 use clap::{Parser, ValueEnum};
-use std::{fs::File, io::Cursor, path::PathBuf};
+use std::{
+    fs::File,
+    io::Cursor,
+    path::{Path, PathBuf},
+};
+
+fn ext_from_path<P: AsRef<Path>>(path: P) -> anyhow::Result<String> {
+    let path = path.as_ref();
+    let os_ext = path
+        .extension()
+        .ok_or_else(|| anyhow::anyhow!("input path {} has no extension", path.display()))?;
+    Ok(os_ext
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("input file extension is invalid utf-8"))?
+        .to_owned())
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 enum FileFormat {
@@ -124,7 +139,37 @@ impl FileFormat {
 
 struct Input {
     reader: Box<dyn std::io::Read>,
-    format: FileFormat,
+    ext: String,
+    input_format: Option<FileFormat>,
+}
+
+impl Input {
+    fn read_to_json(
+        &mut self,
+    ) -> anyhow::Result<Vec<String>> {
+        if let Some(format) = self.input_format {
+            return format.read_to_json(&mut self.reader);
+        }
+        if !self.ext.is_empty() {
+            return FileFormat::from_extension(&self.ext)?.read_to_json(&mut self.reader);
+        }
+        // guess format
+        // we need to seek, so read to bytes
+        let mut content = Vec::<u8>::new();
+        self.reader.read_to_end(&mut content)?;
+        let formats = [
+            FileFormat::Json,
+            FileFormat::Yaml,
+            FileFormat::Toml,
+            FileFormat::Ron,
+        ];
+        for format in formats {
+            if let Ok(jsons) = format.read_to_json(std::io::Cursor::new(&content)) {
+                return Ok(jsons);
+            }
+        }
+        Err(anyhow::anyhow!("Input has an unsupported format"))
+    }
 }
 
 /// A multi-format frontend for jq
@@ -164,27 +209,17 @@ impl Args {
     fn make_inputs(&self) -> anyhow::Result<Vec<Input>> {
         if self.files.is_empty() {
             return Ok(vec![Input {
-                format: self
-                    .input_format
-                    .ok_or_else(|| anyhow::anyhow!("need to specify input format for stdin"))?,
+                ext: "".to_owned(),
                 reader: Box::new(std::io::stdin()),
+                input_format: self.input_format,
             }]);
         }
         let mut readers = Vec::<Input>::new();
         for path in &self.files {
             readers.push(Input {
                 reader: Box::new(File::open(path)?),
-                format: match self.input_format {
-                    Some(format) => format,
-                    None => match path.extension() {
-                        Some(ext) => {
-                            FileFormat::from_extension(ext.to_str().ok_or_else(|| {
-                                anyhow::anyhow!("input file name is invalid utf-8")
-                            })?)?
-                        }
-                        None => anyhow::bail!("input path {} has no extension", path.display()),
-                    },
-                },
+                ext: ext_from_path(path)?,
+                input_format: self.input_format,
             });
         }
         Ok(readers)
@@ -234,15 +269,11 @@ impl Executor {
         })
     }
 
-    fn execute<R: std::io::Read, W: std::io::Write>(
+    fn execute<W: std::io::Write>(
         &mut self,
-        reader: &mut R,
         writer: &mut W,
-        input_format: FileFormat,
+        jsons: &[String],
     ) -> anyhow::Result<()> {
-        let jsons = input_format
-            .read_to_json(reader)
-            .map_err(|err| anyhow::anyhow!("failed to convert input to json: {}", err))?;
         let outputs: anyhow::Result<Vec<String>> = jsons
             .iter()
             .map(|j| {
@@ -283,18 +314,16 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
     let inputs = if args.slurp {
         let array = slurp(&mut args.make_inputs()?)?;
         vec![Input {
-            format: FileFormat::Json,
+            ext: "".to_owned(),
             reader: Box::new(Cursor::new(array)),
+            input_format: args.input_format,
         }]
     } else {
         args.make_inputs()?
     };
     for mut input in inputs {
-        match executor.execute(
-            &mut input.reader,
-            &mut std::io::stdout().lock(),
-            input.format,
-        ) {
+        let jsons = input.read_to_json()?;
+        match executor.execute(&mut std::io::stdout().lock(), &jsons) {
             Ok(_) => {}
             Err(err) => anyhow::bail!("{}", err),
         }
@@ -305,7 +334,7 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
 fn slurp(inputs: &mut [Input]) -> anyhow::Result<String> {
     let mut jsons = Vec::<String>::new();
     for input in inputs {
-        jsons.extend(input.format.read_to_json(&mut input.reader)?.into_iter());
+        jsons.extend(input.read_to_json()?.into_iter());
     }
     let result = format!("[{}]", jsons.join(","));
     anyhow::Ok(result)
@@ -322,12 +351,9 @@ mod test {
         value: &str,
         input_format: FileFormat,
     ) -> Result<String, Box<dyn Error>> {
+        let jsons = input_format.read_to_json(Cursor::new(value.as_bytes()))?;
         let mut buf = Vec::<u8>::new();
-        executor.execute(
-            &mut Cursor::new(value),
-            &mut Cursor::new(&mut buf),
-            input_format,
-        )?;
+        executor.execute(&mut Cursor::new(&mut buf), &jsons)?;
         let result = String::from_utf8(buf)?;
         Ok(result)
     }
@@ -421,15 +447,33 @@ mod test {
     #[test]
     fn slurp() -> Result<(), Box<dyn Error>> {
         let json = Input {
-            format: FileFormat::Json,
+            ext: "".to_owned(),
             reader: Box::new(Cursor::new(r#"{"a":"b"}"#)),
+            input_format: Some(FileFormat::Json),
         };
         let yaml = Input {
-            format: FileFormat::Yaml,
+            ext: "".to_owned(),
             reader: Box::new(Cursor::new("c: d")),
+            input_format: Some(FileFormat::Yaml),
         };
         let array = super::slurp(&mut [json, yaml])?;
         assert_eq!(array, r#"[{"a":"b"},{"c":"d"}]"#);
         Ok(())
+    }
+
+    #[test]
+    fn guess() {
+        let mut json = Input {
+            ext: "".to_owned(),
+            reader: Box::new(Cursor::new(r#"{"a":"b"}"#)),
+            input_format: None,
+        };
+        assert!(json.read_to_json().is_ok());
+        let mut yaml = Input {
+            ext: "".to_owned(),
+            reader: Box::new(Cursor::new("c: d")),
+            input_format: None,
+        };
+        assert!(yaml.read_to_json().is_ok());
     }
 }
