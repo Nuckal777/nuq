@@ -137,6 +137,20 @@ impl FileFormat {
     }
 }
 
+struct JsonDocuments {
+    jsons: Vec<String>,
+    input_format: FileFormat,
+}
+
+impl JsonDocuments {
+    fn new(jsons: Vec<String>, input_format: FileFormat) -> Self {
+        Self {
+            jsons,
+            input_format,
+        }
+    }
+}
+
 struct Input {
     reader: Box<dyn std::io::Read>,
     ext: String,
@@ -144,14 +158,19 @@ struct Input {
 }
 
 impl Input {
-    fn read_to_json(
-        &mut self,
-    ) -> anyhow::Result<Vec<String>> {
+    fn read_to_docs(&mut self) -> anyhow::Result<JsonDocuments> {
         if let Some(format) = self.input_format {
-            return format.read_to_json(&mut self.reader);
+            return Ok(JsonDocuments::new(
+                format.read_to_json(&mut self.reader)?,
+                format,
+            ));
         }
         if !self.ext.is_empty() {
-            return FileFormat::from_extension(&self.ext)?.read_to_json(&mut self.reader);
+            let format = FileFormat::from_extension(&self.ext)?;
+            return Ok(JsonDocuments::new(
+                format.read_to_json(&mut self.reader)?,
+                format,
+            ));
         }
         // guess format
         // we need to seek, so read to bytes
@@ -165,7 +184,7 @@ impl Input {
         ];
         for format in formats {
             if let Ok(jsons) = format.read_to_json(std::io::Cursor::new(&content)) {
-                return Ok(jsons);
+                return Ok(JsonDocuments::new(jsons, format));
             }
         }
         Err(anyhow::anyhow!("Input has an unsupported format"))
@@ -184,11 +203,11 @@ pub struct Args {
     #[clap(value_parser)]
     files: Vec<PathBuf>,
 
-    /// Input format, will be guessed by extension if omitted.
+    /// Input format, will be guessed by extension or content.
     #[clap(short, long, value_parser, value_enum)]
     input_format: Option<FileFormat>,
 
-    /// Output format, if omitted will return whatever libjq produces.
+    /// Output format, if omitted will return the input format.
     /// Toml output may require reordering the input.
     #[clap(short, long, value_parser, value_enum)]
     output_format: Option<FileFormat>,
@@ -251,28 +270,19 @@ fn pop_quotes(text: &str) -> String {
 
 struct Executor {
     program: jq_rs::JqProgram,
-    output_format: Option<FileFormat>,
-    raw: bool,
 }
 
 impl Executor {
-    fn new(
-        program: &str,
-        output_format: Option<FileFormat>,
-        raw: bool,
-    ) -> anyhow::Result<Executor> {
+    fn new(program: &str) -> anyhow::Result<Executor> {
         let program = jq_rs::compile(program).map_err(|err| anyhow::anyhow!("{}", err))?;
-        Ok(Self {
-            program,
-            output_format,
-            raw,
-        })
+        Ok(Self { program })
     }
 
     fn execute<W: std::io::Write>(
         &mut self,
-        writer: &mut W,
         jsons: &[String],
+        output_format: Option<FileFormat>,
+        writer: &mut W,
     ) -> anyhow::Result<()> {
         let outputs: anyhow::Result<Vec<String>> = jsons
             .iter()
@@ -281,15 +291,14 @@ impl Executor {
                     .program
                     .run(j)
                     .map_err(|err| anyhow::anyhow!("failed to execute jq program: {}", err))?;
-                if self.raw {
-                    Ok(pop_quotes(&output))
-                } else {
-                    Ok(output)
+                match output_format {
+                    Some(_) => Ok(output),
+                    None => Ok(pop_quotes(&output)),
                 }
             })
             .collect();
         let outputs = outputs?;
-        match self.output_format {
+        match output_format {
             Some(format) => format
                 .write_format(&outputs, writer)
                 .map_err(|err| anyhow::anyhow!("failed to produce output: {}", err))?,
@@ -306,11 +315,12 @@ impl Executor {
 /// Runs nuq
 /// # Errors
 /// When arg parsing, io, ... fails
+/// # Panics
+/// When the executor is somehow not initialized.
 pub fn run(args: &Args) -> anyhow::Result<()> {
     if args.raw && args.output_format.is_some() {
         anyhow::bail!("cannot use --raw with --output-format");
     }
-    let mut executor = Executor::new(&args.program, args.output_format, args.raw)?;
     let inputs = if args.slurp {
         let array = slurp(&mut args.make_inputs()?)?;
         vec![Input {
@@ -321,9 +331,18 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
     } else {
         args.make_inputs()?
     };
+    let mut executor = Executor::new(&args.program)?;
     for mut input in inputs {
-        let jsons = input.read_to_json()?;
-        match executor.execute(&mut std::io::stdout().lock(), &jsons) {
+        let docs = input.read_to_docs()?;
+        let output_format = if args.raw {
+            None
+        } else {
+            Some(match args.output_format {
+                Some(format) => format,
+                None => docs.input_format,
+            })
+        };
+        match executor.execute(&docs.jsons, output_format, &mut std::io::stdout().lock()) {
             Ok(_) => {}
             Err(err) => anyhow::bail!("{}", err),
         }
@@ -334,7 +353,7 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
 fn slurp(inputs: &mut [Input]) -> anyhow::Result<String> {
     let mut jsons = Vec::<String>::new();
     for input in inputs {
-        jsons.extend(input.read_to_json()?.into_iter());
+        jsons.extend(input.read_to_docs()?.jsons.into_iter());
     }
     let result = format!("[{}]", jsons.join(","));
     anyhow::Ok(result)
@@ -350,10 +369,11 @@ mod test {
         executor: &mut Executor,
         value: &str,
         input_format: FileFormat,
+        output_format: Option<FileFormat>,
     ) -> Result<String, Box<dyn Error>> {
         let jsons = input_format.read_to_json(Cursor::new(value.as_bytes()))?;
         let mut buf = Vec::<u8>::new();
-        executor.execute(&mut Cursor::new(&mut buf), &jsons)?;
+        executor.execute(&jsons, output_format, &mut Cursor::new(&mut buf))?;
         let result = String::from_utf8(buf)?;
         Ok(result)
     }
@@ -384,8 +404,8 @@ mod test {
     #[test]
     fn identity_json() -> Result<(), Box<dyn Error>> {
         let json = r#"{"a":"b"}"#;
-        let mut executor = Executor::new(".", Some(FileFormat::Json), false)?;
-        let result = execute_str(&mut executor, json, FileFormat::Json)?;
+        let mut executor = Executor::new(".")?;
+        let result = execute_str(&mut executor, json, FileFormat::Json, Some(FileFormat::Json))?;
         assert_eq!(result, format!("{}\n", json));
         Ok(())
     }
@@ -393,8 +413,8 @@ mod test {
     #[test]
     fn identity_yaml() -> Result<(), Box<dyn Error>> {
         let yaml = "a: b";
-        let mut executor = Executor::new(".", Some(FileFormat::Yaml), false)?;
-        let result = execute_str(&mut executor, yaml, FileFormat::Yaml)?;
+        let mut executor = Executor::new(".")?;
+        let result = execute_str(&mut executor, yaml, FileFormat::Yaml, Some(FileFormat::Yaml))?;
         assert_eq!(result, format!("{}\n", yaml));
         Ok(())
     }
@@ -402,8 +422,8 @@ mod test {
     #[test]
     fn identity_multi_yaml() -> Result<(), Box<dyn Error>> {
         let yaml = "a: b\n---\na: c";
-        let mut executor = Executor::new(".", Some(FileFormat::Yaml), false)?;
-        let result = execute_str(&mut executor, yaml, FileFormat::Yaml)?;
+        let mut executor = Executor::new(".")?;
+        let result = execute_str(&mut executor, yaml, FileFormat::Yaml, Some(FileFormat::Yaml))?;
         assert_eq!(&result, "---\na: b\n---\na: c\n");
         Ok(())
     }
@@ -411,8 +431,8 @@ mod test {
     #[test]
     fn identity_ron() -> Result<(), Box<dyn Error>> {
         let ron = r#"(a: "b")"#;
-        let mut executor = Executor::new(".", Some(FileFormat::Ron), false)?;
-        let result = execute_str(&mut executor, ron, FileFormat::Ron)?;
+        let mut executor = Executor::new(".")?;
+        let result = execute_str(&mut executor, ron, FileFormat::Ron, Some(FileFormat::Ron))?;
         assert_eq!(result, "{\"a\":\"b\"}\n");
         Ok(())
     }
@@ -420,8 +440,8 @@ mod test {
     #[test]
     fn identity_toml() -> Result<(), Box<dyn Error>> {
         let ron = r#"a = "b""#;
-        let mut executor = Executor::new(".", Some(FileFormat::Toml), false)?;
-        let result = execute_str(&mut executor, ron, FileFormat::Toml)?;
+        let mut executor = Executor::new(".")?;
+        let result = execute_str(&mut executor, ron, FileFormat::Toml, Some(FileFormat::Toml))?;
         assert_eq!(result, "a = \"b\"\n");
         Ok(())
     }
@@ -429,8 +449,8 @@ mod test {
     #[test]
     fn string_json() -> Result<(), Box<dyn Error>> {
         let json = r#"{"a":"b"}"#;
-        let mut executor = Executor::new(".a", Some(FileFormat::Json), false)?;
-        let result = execute_str(&mut executor, json, FileFormat::Json)?;
+        let mut executor = Executor::new(".a")?;
+        let result = execute_str(&mut executor, json, FileFormat::Json, Some(FileFormat::Json))?;
         assert_eq!(result, "\"b\"\n");
         Ok(())
     }
@@ -438,8 +458,8 @@ mod test {
     #[test]
     fn string_raw() -> Result<(), Box<dyn Error>> {
         let json = r#"{"a":"b"}"#;
-        let mut executor = Executor::new(".a", None, true)?;
-        let result = execute_str(&mut executor, json, FileFormat::Json)?;
+        let mut executor = Executor::new(".a")?;
+        let result = execute_str(&mut executor, json, FileFormat::Json, None)?;
         assert_eq!(result, "b\n");
         Ok(())
     }
@@ -468,12 +488,12 @@ mod test {
             reader: Box::new(Cursor::new(r#"{"a":"b"}"#)),
             input_format: None,
         };
-        assert!(json.read_to_json().is_ok());
+        assert!(json.read_to_docs().is_ok());
         let mut yaml = Input {
             ext: "".to_owned(),
             reader: Box::new(Cursor::new("c: d")),
             input_format: None,
         };
-        assert!(yaml.read_to_json().is_ok());
+        assert!(yaml.read_to_docs().is_ok());
     }
 }
