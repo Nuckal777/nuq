@@ -5,6 +5,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod highlight;
+
 fn ext_from_path<P: AsRef<Path>>(path: P) -> anyhow::Result<String> {
     let path = path.as_ref();
     let os_ext = path
@@ -17,7 +19,7 @@ fn ext_from_path<P: AsRef<Path>>(path: P) -> anyhow::Result<String> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-enum FileFormat {
+pub enum FileFormat {
     Json,
     Yaml,
     Ron,
@@ -32,6 +34,16 @@ impl FileFormat {
             "yaml" | "yml" => Ok(FileFormat::Yaml),
             "toml" => Ok(FileFormat::Toml),
             _ => Err(anyhow::anyhow!("unknown extension: {}", ext)),
+        }
+    }
+
+    #[must_use]
+    pub fn to_extension(self) -> &'static str {
+        match self {
+            FileFormat::Json => "json",
+            FileFormat::Yaml => "yaml",
+            FileFormat::Ron => "ron",
+            FileFormat::Toml => "toml",
         }
     }
 
@@ -333,6 +345,7 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
     };
     let mut executor = Executor::new(&args.program)?;
     for mut input in inputs {
+        let mut syntect_writer = highlight::Writer::default();
         let docs = input.read_to_docs()?;
         let output_format = if args.raw {
             None
@@ -342,9 +355,13 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
                 None => docs.input_format,
             })
         };
-        match executor.execute(&docs.jsons, output_format, &mut std::io::stdout().lock()) {
+        match executor.execute(&docs.jsons, output_format, &mut syntect_writer) {
             Ok(_) => {}
             Err(err) => anyhow::bail!("{}", err),
+        }
+        match output_format {
+            Some(format) => print!("{}", syntect_writer.highlight(format)?),
+            None => {},
         }
     }
     Ok(())
