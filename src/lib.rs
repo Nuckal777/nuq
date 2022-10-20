@@ -1,7 +1,7 @@
 use clap::{Parser, ValueEnum};
 use std::{
     fs::File,
-    io::Cursor,
+    io::{Cursor, Write},
     path::{Path, PathBuf},
 };
 
@@ -234,6 +234,11 @@ pub struct Args {
     /// with jq.
     #[clap(long, action)]
     slurp: bool,
+
+    /// Enables or disables colored output. By default coloring is enabled
+    /// when writing to a tty.
+    #[clap(short, long, action)]
+    color: Option<bool>,
 }
 
 impl Args {
@@ -254,6 +259,19 @@ impl Args {
             });
         }
         Ok(readers)
+    }
+
+    fn should_color(&self, format: Option<FileFormat>) -> bool {
+        match self.color {
+            Some(should) => should,
+            None => {
+                if atty::is(atty::Stream::Stdout) {
+                    format.is_some()
+                } else {
+                    false
+                }
+            }
+        }
     }
 }
 
@@ -344,8 +362,8 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
         args.make_inputs()?
     };
     let mut executor = Executor::new(&args.program)?;
+    let styles = highlight::Styles::default();
     for mut input in inputs {
-        let mut syntect_writer = highlight::Writer::default();
         let docs = input.read_to_docs()?;
         let output_format = if args.raw {
             None
@@ -355,14 +373,20 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
                 None => docs.input_format,
             })
         };
-        match executor.execute(&docs.jsons, output_format, &mut syntect_writer) {
+        let mut writer: Box<dyn Write> = if args.should_color(output_format) {
+            Box::new(highlight::Writer::new(
+                std::io::stdout().lock(),
+                output_format.unwrap(),
+                &styles,
+            ))
+        } else {
+            Box::new(std::io::stdout().lock())
+        };
+        match executor.execute(&docs.jsons, output_format, &mut writer) {
             Ok(_) => {}
             Err(err) => anyhow::bail!("{}", err),
         }
-        match output_format {
-            Some(format) => print!("{}", syntect_writer.highlight(format)?),
-            None => {},
-        }
+        writer.flush()?;
     }
     Ok(())
 }
@@ -422,7 +446,12 @@ mod test {
     fn identity_json() -> Result<(), Box<dyn Error>> {
         let json = r#"{"a":"b"}"#;
         let mut executor = Executor::new(".")?;
-        let result = execute_str(&mut executor, json, FileFormat::Json, Some(FileFormat::Json))?;
+        let result = execute_str(
+            &mut executor,
+            json,
+            FileFormat::Json,
+            Some(FileFormat::Json),
+        )?;
         assert_eq!(result, format!("{}\n", json));
         Ok(())
     }
@@ -431,7 +460,12 @@ mod test {
     fn identity_yaml() -> Result<(), Box<dyn Error>> {
         let yaml = "a: b";
         let mut executor = Executor::new(".")?;
-        let result = execute_str(&mut executor, yaml, FileFormat::Yaml, Some(FileFormat::Yaml))?;
+        let result = execute_str(
+            &mut executor,
+            yaml,
+            FileFormat::Yaml,
+            Some(FileFormat::Yaml),
+        )?;
         assert_eq!(result, format!("{}\n", yaml));
         Ok(())
     }
@@ -440,7 +474,12 @@ mod test {
     fn identity_multi_yaml() -> Result<(), Box<dyn Error>> {
         let yaml = "a: b\n---\na: c";
         let mut executor = Executor::new(".")?;
-        let result = execute_str(&mut executor, yaml, FileFormat::Yaml, Some(FileFormat::Yaml))?;
+        let result = execute_str(
+            &mut executor,
+            yaml,
+            FileFormat::Yaml,
+            Some(FileFormat::Yaml),
+        )?;
         assert_eq!(&result, "---\na: b\n---\na: c\n");
         Ok(())
     }
@@ -467,7 +506,12 @@ mod test {
     fn string_json() -> Result<(), Box<dyn Error>> {
         let json = r#"{"a":"b"}"#;
         let mut executor = Executor::new(".a")?;
-        let result = execute_str(&mut executor, json, FileFormat::Json, Some(FileFormat::Json))?;
+        let result = execute_str(
+            &mut executor,
+            json,
+            FileFormat::Json,
+            Some(FileFormat::Json),
+        )?;
         assert_eq!(result, "\"b\"\n");
         Ok(())
     }

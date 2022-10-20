@@ -35,6 +35,13 @@ fn slurp() {
     );
 }
 
+#[test]
+fn yaml_stdin_identity_color() {
+    let (exit, output) = spawn_nuq(&["-i", "yaml", "-c", "true", "."], b"key: test");
+    assert!(exit.success());
+    assert_eq!(output, "\u{1b}[38;2;99;163;92mkey\u{1b}[38;2;50;50;50m:\u{1b}[38;2;50;50;50m \u{1b}[38;2;24;54;145mtest\u{1b}[38;2;50;50;50m\n\u{1b}[0m");
+}
+
 fn spawn_nuq(args: &[&str], input: &[u8]) -> (ExitStatus, String) {
     let mut handle = Command::new(BINARY_PATH)
         .args(args)
