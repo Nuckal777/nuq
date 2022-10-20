@@ -443,6 +443,14 @@ mod test {
     }
 
     #[test]
+    fn file_format_to_extension() {
+        assert_eq!(FileFormat::Json.to_extension(), "json");
+        assert_eq!(FileFormat::Yaml.to_extension(), "yaml");
+        assert_eq!(FileFormat::Toml.to_extension(), "toml");
+        assert_eq!(FileFormat::Ron.to_extension(), "ron");
+    }
+
+    #[test]
     fn identity_json() -> Result<(), Box<dyn Error>> {
         let json = r#"{"a":"b"}"#;
         let mut executor = Executor::new(".")?;
