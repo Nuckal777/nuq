@@ -1,7 +1,7 @@
 use clap::{Parser, ValueEnum};
 use std::{
     fs::File,
-    io::{Cursor, Write},
+    io::{Cursor, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -47,7 +47,7 @@ impl FileFormat {
         }
     }
 
-    fn read_to_json<R: std::io::Read>(self, mut reader: R) -> anyhow::Result<Vec<String>> {
+    fn read_to_json<R: Read>(self, mut reader: R) -> anyhow::Result<Vec<String>> {
         let mut json = Vec::<u8>::new();
         match self {
             FileFormat::Json => {
@@ -89,9 +89,10 @@ impl FileFormat {
         anyhow::Ok(vec![String::from_utf8(json)?])
     }
 
-    fn write_format<W: std::io::Write>(
+    fn write_format<W: Write>(
         self,
         values: &[String],
+        pretty: bool,
         mut writer: &mut W,
     ) -> anyhow::Result<()> {
         match self {
@@ -99,8 +100,13 @@ impl FileFormat {
             FileFormat::Json => {
                 for value in values {
                     let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
-                    let mut se = serde_json::Serializer::new(&mut writer);
-                    serde_transcode::transcode(&mut de, &mut se)?;
+                    if pretty {
+                        let mut se = serde_json::Serializer::pretty(&mut writer);
+                        serde_transcode::transcode(&mut de, &mut se)?;
+                    } else {
+                        let mut se = serde_json::Serializer::new(&mut writer);
+                        serde_transcode::transcode(&mut de, &mut se)?;
+                    }
                     writer.write_all(&[b'\n'])?;
                 }
             }
@@ -122,8 +128,16 @@ impl FileFormat {
                 }
                 for value in values {
                     let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
-                    let mut se =
-                        ron::Serializer::with_options(&mut writer, None, ron::Options::default())?;
+                    let pretty_conf = if pretty {
+                        Some(ron::ser::PrettyConfig::default())
+                    } else {
+                        None
+                    };
+                    let mut se = ron::Serializer::with_options(
+                        &mut writer,
+                        pretty_conf,
+                        ron::Options::default(),
+                    )?;
                     serde_transcode::transcode(&mut de, &mut se)?;
                     writer.write_all(&[b'\n'])?;
                 }
@@ -138,7 +152,11 @@ impl FileFormat {
                 for value in values {
                     let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
                     let mut toml = String::new();
-                    let mut se = toml::Serializer::new(&mut toml);
+                    let mut se = if pretty {
+                        toml::Serializer::pretty(&mut toml)
+                    } else {
+                        toml::Serializer::new(&mut toml)
+                    };
                     serde_transcode::transcode(&mut de, &mut se)?;
                     drop(se);
                     writer.write_all(toml.as_bytes())?;
@@ -164,7 +182,7 @@ impl JsonDocuments {
 }
 
 struct Input {
-    reader: Box<dyn std::io::Read>,
+    reader: Box<dyn Read>,
     ext: String,
     input_format: Option<FileFormat>,
 }
@@ -195,7 +213,7 @@ impl Input {
             FileFormat::Ron,
         ];
         for format in formats {
-            if let Ok(jsons) = format.read_to_json(std::io::Cursor::new(&content)) {
+            if let Ok(jsons) = format.read_to_json(Cursor::new(&content)) {
                 return Ok(JsonDocuments::new(jsons, format));
             }
         }
@@ -239,6 +257,10 @@ pub struct Args {
     /// when writing to a tty.
     #[clap(short, long, action)]
     color: Option<bool>,
+
+    /// Pretty-prints the out, if the serializer supports that.
+    #[clap(short, long, action)]
+    pretty: bool,
 }
 
 impl Args {
@@ -308,10 +330,11 @@ impl Executor {
         Ok(Self { program })
     }
 
-    fn execute<W: std::io::Write>(
+    fn execute<W: Write>(
         &mut self,
         jsons: &[String],
         output_format: Option<FileFormat>,
+        pretty: bool,
         writer: &mut W,
     ) -> anyhow::Result<()> {
         let outputs: anyhow::Result<Vec<String>> = jsons
@@ -330,7 +353,7 @@ impl Executor {
         let outputs = outputs?;
         match output_format {
             Some(format) => format
-                .write_format(&outputs, writer)
+                .write_format(&outputs, pretty, writer)
                 .map_err(|err| anyhow::anyhow!("failed to produce output: {}", err))?,
             None => {
                 for output in outputs {
@@ -382,7 +405,7 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
         } else {
             Box::new(std::io::stdout().lock())
         };
-        match executor.execute(&docs.jsons, output_format, &mut writer) {
+        match executor.execute(&docs.jsons, output_format, args.pretty, &mut writer) {
             Ok(_) => {}
             Err(err) => anyhow::bail!("{}", err),
         }
@@ -414,7 +437,7 @@ mod test {
     ) -> Result<String, Box<dyn Error>> {
         let jsons = input_format.read_to_json(Cursor::new(value.as_bytes()))?;
         let mut buf = Vec::<u8>::new();
-        executor.execute(&jsons, output_format, &mut Cursor::new(&mut buf))?;
+        executor.execute(&jsons, output_format, false, &mut Cursor::new(&mut buf))?;
         let result = String::from_utf8(buf)?;
         Ok(result)
     }
