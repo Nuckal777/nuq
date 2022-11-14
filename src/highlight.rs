@@ -65,7 +65,7 @@ impl<W: Write> Writer<'_, W> {
         }
         let syntax = syntax.unwrap();
         let mut lighter =
-            HighlightLines::new(syntax, &self.styles.theme_set.themes["InspiredGitHub"]);
+            HighlightLines::new(syntax, &self.styles.theme_set.themes["base16-ocean.dark"]);
         let text = std::str::from_utf8(&self.buf)?;
         for line in LinesWithEndings::from(text) {
             let ranges: Vec<(Style, &str)> = lighter
