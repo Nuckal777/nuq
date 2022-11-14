@@ -21,3 +21,10 @@ serde-transcode = "1.1"
 serde_yaml = "0.9"
 syntect = "5.0"
 toml = "0.5"
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/nuq", dest = "/usr/bin/nuq", mode = "0755" },
+    { source = "LICENSE", dest = "/usr/share/doc/nuq/LICENSE", doc = true, mode = "0644" },
+    { source = "README.md", dest = "/usr/share/doc/nuq/README.md", doc = true, mode = "0644" }
+]
