@@ -1,5 +1,6 @@
 [package]
 name = "nuq"
+description = "A multi-format frontend to jq"
 version = "0.1.0"
 edition = "2021"
 authors = ["Erik Schubert <nuckal777+nuq@gmail.com>"]

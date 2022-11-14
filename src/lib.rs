@@ -267,7 +267,7 @@ impl Args {
     fn make_inputs(&self) -> anyhow::Result<Vec<Input>> {
         if self.files.is_empty() {
             return Ok(vec![Input {
-                ext: "".to_owned(),
+                ext: String::new(),
                 reader: Box::new(std::io::stdin()),
                 input_format: self.input_format,
             }]);
@@ -377,7 +377,7 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
     let inputs = if args.slurp {
         let array = slurp(&mut args.make_inputs()?)?;
         vec![Input {
-            ext: "".to_owned(),
+            ext: String::new(),
             reader: Box::new(Cursor::new(array)),
             input_format: args.input_format,
         }]
@@ -559,12 +559,12 @@ mod test {
     #[test]
     fn slurp() -> Result<(), Box<dyn Error>> {
         let json = Input {
-            ext: "".to_owned(),
+            ext: String::new(),
             reader: Box::new(Cursor::new(r#"{"a":"b"}"#)),
             input_format: Some(FileFormat::Json),
         };
         let yaml = Input {
-            ext: "".to_owned(),
+            ext: String::new(),
             reader: Box::new(Cursor::new("c: d")),
             input_format: Some(FileFormat::Yaml),
         };
@@ -576,13 +576,13 @@ mod test {
     #[test]
     fn guess() {
         let mut json = Input {
-            ext: "".to_owned(),
+            ext: String::new(),
             reader: Box::new(Cursor::new(r#"{"a":"b"}"#)),
             input_format: None,
         };
         assert!(json.read_to_docs().is_ok());
         let mut yaml = Input {
-            ext: "".to_owned(),
+            ext: String::new(),
             reader: Box::new(Cursor::new("c: d")),
             input_format: None,
         };

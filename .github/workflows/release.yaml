@@ -7,6 +7,7 @@ on:
         required: true
 env:
   TARGET_VERSION: ${{ github.event.inputs.version }}
+  JQ_LIB_DIR: /usr/lib/x86_64-linux-gnu
 jobs:
   release:
     name: Create release
@@ -23,6 +24,10 @@ jobs:
                 else
                   exit 1
                 fi
+      - name: Install libjq-dev and libonig-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install libjq-dev libonig-dev
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
