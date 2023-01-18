@@ -13,9 +13,9 @@ repository = "https://github.com/Nuckal777/nuq"
 [dependencies]
 anyhow = "1.0"
 atty = "0.2"
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.1", features = ["derive"] }
 jq-rs = "0.4"
-ron = "0.7"
+ron = "0.8"
 serde = "1.0"
 serde_json = "1.0"
 serde-transcode = "1.1"

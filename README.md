@@ -1,6 +1,6 @@
 # Nuq
 
-![Build Status](https://img.shields.io/github/workflow/status/Nuckal777/nicator/test)
+![Build Status](https://img.shields.io/github/actions/workflow/status/Nuckal777/nuq/test.yaml?branch=master)
 [![Coverage Status](https://coveralls.io/repos/github/Nuckal777/nuq/badge.svg?branch=master)](https://coveralls.io/github/Nuckal777/nuq?branch=master)
 
 A multi-format frontend to jq supporting pretty-printing and syntax highlighting. Whether you need to process JSON, YAML or TOML pipe it into `nuq` and be done with it.
@@ -36,7 +36,7 @@ Options:
   -c, --color <COLOR>
           Enables or disables colored output. By default coloring is enabled when writing to a tty [possible values: true, false]
   -p, --pretty
-          Pretty-prints the out, if the serializer supports that
+          Pretty-prints the output, if the serializer supports that
 ```
 
 ## How it works

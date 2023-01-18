@@ -258,7 +258,7 @@ pub struct Args {
     #[clap(short, long, action)]
     color: Option<bool>,
 
-    /// Pretty-prints the out, if the serializer supports that.
+    /// Pretty-prints the output, if the serializer supports that.
     #[clap(short, long, action)]
     pretty: bool,
 }
