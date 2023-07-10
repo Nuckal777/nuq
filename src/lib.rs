@@ -81,9 +81,9 @@ impl FileFormat {
                 let mut input = Vec::<u8>::new();
                 reader.read_to_end(&mut input)?;
                 let toml = String::from_utf8(input)?;
-                let mut de = toml::Deserializer::new(&toml);
+                let de = toml::Deserializer::new(&toml);
                 let mut se = serde_json::Serializer::new(Cursor::new(&mut json));
-                serde_transcode::transcode(&mut de, &mut se)?;
+                serde_transcode::transcode(de, &mut se)?;
             }
         }
         anyhow::Ok(vec![String::from_utf8(json)?])
@@ -152,13 +152,12 @@ impl FileFormat {
                 for value in values {
                     let mut de = serde_json::Deserializer::from_reader(Cursor::new(value));
                     let mut toml = String::new();
-                    let mut se = if pretty {
+                    let se = if pretty {
                         toml::Serializer::pretty(&mut toml)
                     } else {
                         toml::Serializer::new(&mut toml)
                     };
-                    serde_transcode::transcode(&mut de, &mut se)?;
-                    drop(se);
+                    serde_transcode::transcode(&mut de, se)?;
                     writer.write_all(toml.as_bytes())?;
                 }
             }
@@ -483,7 +482,7 @@ mod test {
             FileFormat::Json,
             Some(FileFormat::Json),
         )?;
-        assert_eq!(result, format!("{}\n", json));
+        assert_eq!(result, format!("{json}\n"));
         Ok(())
     }
 
@@ -497,7 +496,7 @@ mod test {
             FileFormat::Yaml,
             Some(FileFormat::Yaml),
         )?;
-        assert_eq!(result, format!("{}\n", yaml));
+        assert_eq!(result, format!("{yaml}\n"));
         Ok(())
     }
 

@@ -13,7 +13,7 @@ repository = "https://github.com/Nuckal777/nuq"
 [dependencies]
 anyhow = "1.0"
 atty = "0.2"
-clap = { version = "4.1", features = ["derive"] }
+clap = { version = "4.3", features = ["derive"] }
 jq-rs = "0.4"
 ron = "0.8"
 serde = "1.0"
@@ -21,7 +21,7 @@ serde_json = "1.0"
 serde-transcode = "1.1"
 serde_yaml = "0.9"
 syntect = "5.0"
-toml = "0.5"
+toml = "0.7"
 
 [package.metadata.generate-rpm]
 assets = [
