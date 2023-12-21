@@ -405,7 +405,7 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
             Box::new(std::io::stdout().lock())
         };
         match executor.execute(&docs.jsons, output_format, args.pretty, &mut writer) {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(err) => anyhow::bail!("{}", err),
         }
         writer.flush()?;
