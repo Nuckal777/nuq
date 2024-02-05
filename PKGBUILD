@@ -1,6 +1,6 @@
 # Maintainer: Erik "Nuckal777" Schubert <nuckal777+nuq@gmail.com>
 pkgname=nuq
-pkgver=0.1.2
+pkgver=0.1.3
 pkgrel=1
 pkgdesc="A multi-format frontend to jq"
 arch=('x86_64')
@@ -8,7 +8,7 @@ url="https://github.com/Nuckal777/nuq"
 license=('Unlicense')
 depends=('gcc-libs' 'jq')
 makedepends=('cargo' 'git')
-source=("$pkgname"::"git+https://github.com/Nuckal777/nuq#tag=v0.1.2")
+source=("$pkgname"::"git+https://github.com/Nuckal777/nuq#tag=v0.1.3")
 noextract=()
 md5sums=('SKIP')
 

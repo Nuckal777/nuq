@@ -183,12 +183,12 @@ impl JsonDocuments {
 struct Input {
     reader: Box<dyn Read>,
     ext: String,
-    input_format: Option<FileFormat>,
+    format: Option<FileFormat>,
 }
 
 impl Input {
     fn read_to_docs(&mut self) -> anyhow::Result<JsonDocuments> {
-        if let Some(format) = self.input_format {
+        if let Some(format) = self.format {
             return Ok(JsonDocuments::new(
                 format.read_to_json(&mut self.reader)?,
                 format,
@@ -268,7 +268,7 @@ impl Args {
             return Ok(vec![Input {
                 ext: String::new(),
                 reader: Box::new(std::io::stdin()),
-                input_format: self.input_format,
+                format: self.input_format,
             }]);
         }
         let mut readers = Vec::<Input>::new();
@@ -276,7 +276,7 @@ impl Args {
             readers.push(Input {
                 reader: Box::new(File::open(path)?),
                 ext: ext_from_path(path)?,
-                input_format: self.input_format,
+                format: self.input_format,
             });
         }
         Ok(readers)
@@ -378,7 +378,7 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
         vec![Input {
             ext: String::new(),
             reader: Box::new(Cursor::new(array)),
-            input_format: args.input_format,
+            format: args.input_format,
         }]
     } else {
         args.make_inputs()?
@@ -560,12 +560,12 @@ mod test {
         let json = Input {
             ext: String::new(),
             reader: Box::new(Cursor::new(r#"{"a":"b"}"#)),
-            input_format: Some(FileFormat::Json),
+            format: Some(FileFormat::Json),
         };
         let yaml = Input {
             ext: String::new(),
             reader: Box::new(Cursor::new("c: d")),
-            input_format: Some(FileFormat::Yaml),
+            format: Some(FileFormat::Yaml),
         };
         let array = super::slurp(&mut [json, yaml])?;
         assert_eq!(array, r#"[{"a":"b"},{"c":"d"}]"#);
@@ -577,13 +577,13 @@ mod test {
         let mut json = Input {
             ext: String::new(),
             reader: Box::new(Cursor::new(r#"{"a":"b"}"#)),
-            input_format: None,
+            format: None,
         };
         assert!(json.read_to_docs().is_ok());
         let mut yaml = Input {
             ext: String::new(),
             reader: Box::new(Cursor::new("c: d")),
-            input_format: None,
+            format: None,
         };
         assert!(yaml.read_to_docs().is_ok());
     }
