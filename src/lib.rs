@@ -1,7 +1,7 @@
 use clap::{Parser, ValueEnum};
 use std::{
     fs::File,
-    io::{Cursor, Read, Write},
+    io::{Cursor, IsTerminal, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -107,7 +107,7 @@ impl FileFormat {
                         let mut se = serde_json::Serializer::new(&mut writer);
                         serde_transcode::transcode(&mut de, &mut se)?;
                     }
-                    writer.write_all(&[b'\n'])?;
+                    writer.write_all(b"\n")?;
                 }
             }
             FileFormat::Yaml => {
@@ -139,7 +139,7 @@ impl FileFormat {
                         ron::Options::default(),
                     )?;
                     serde_transcode::transcode(&mut de, &mut se)?;
-                    writer.write_all(&[b'\n'])?;
+                    writer.write_all(b"\n")?;
                 }
             }
             FileFormat::Toml => {
@@ -286,7 +286,7 @@ impl Args {
         match self.color {
             Some(should) => should,
             None => {
-                if atty::is(atty::Stream::Stdout) {
+                if std::io::stdout().is_terminal() {
                     format.is_some()
                 } else {
                     false
